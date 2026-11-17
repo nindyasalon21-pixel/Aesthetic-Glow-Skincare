@@ -1,0 +1,1146 @@
+<?php
+// 1. KONEKSI & API DATABASE db_skincare
+error_reporting(0);
+$host     = "localhost";
+$username = "root";
+$password = "";
+$database = "db_skincare";
+
+$db = new mysqli($host, $username, $password, $database);
+
+// PASTIKAN TABEL PRODUCTS MEMILIKI DATA AWAL DENGAN GAMBAR YANG AKURAT
+if (!empty($db) AND empty($db->connect_error)) {
+    $db->query("CREATE TABLE IF NOT EXISTS products (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        category VARCHAR(100) NOT NULL,
+        price DECIMAL(10,2) NOT NULL,
+        stock INT NOT NULL DEFAULT 0,
+        description TEXT,
+        image_url TEXT
+    )");
+
+    $check_col = $db->query("SHOW COLUMNS FROM products LIKE 'image_url'");
+    if ($check_col && $check_col->num_rows == 0) {
+        $db->query("ALTER TABLE products ADD COLUMN image_url TEXT");
+    }
+
+    $cek_prod = $db->query("SELECT COUNT(*) AS total FROM products");
+    if ($cek_prod) {
+        $row_cek = $cek_prod->fetch_assoc();
+        if (intval($row_cek['total']) === 0) {
+            $init_products = [
+                [1, 'Gentle Cleansing Gel', 'Facial Wash', 59000, 25, 'Sabun cuci muka gel lembut dengan Rose Extract & BHA untuk pori bersih mempesona.', 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=800&q=80'],
+                [2, 'Radiance Essence Toner', 'Toner', 175000, 15, 'Essence toner eksfoliasi lembut dengan Niacinamide & AHA-BHA penyeimbang pH.', 'https://images.unsplash.com/photo-1608248597359-90e927949666?auto=format&fit=crop&w=800&q=80'],
+                [3, 'Radiance Glow Serum', 'Serum', 89000, 30, 'Serum pencerah kulit intensif dengan Niacinamide 10% & Peptida Kompleks.', 'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?auto=format&fit=crop&w=800&q=80'],
+                [4, 'Barrier Velvet Cream', 'Moisturizer', 75000, 10, 'Pelembab kaya Ceramide mengunci hidrasi 24 jam untuk skin barrier kuat.', 'https://images.unsplash.com/photo-1535585209827-a15fcdbc4c2d?auto=format&fit=crop&w=800&q=80'],
+                [5, 'Daily Invisible Sunscreen', 'Sunscreen', 68000, 20, 'Tabir surya ringan, tanpa whitecast, melindungi maksimal dari UV A/B.', 'https://images.unsplash.com/photo-1598440947619-2c35fc9aa908?auto=format&fit=crop&w=800&q=80'],
+                [6, 'Rose Micellar Water', 'Facial Wash', 48000, 18, 'Pembersih makeup & kotoran sekali usap dengan kandungan air mawar alami.', 'https://images.unsplash.com/photo-1526947425960-945c6e72858f?auto=format&fit=crop&w=800&q=80'],
+                [7, 'Overnight Night Cream', 'Cream', 92000, 12, 'Krim malam nutrisi ekstra untuk regenerasi sel kulit saat tidur lelap.', 'https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?auto=format&fit=crop&w=800&q=80'],
+                [8, 'Youth Eye Concentrate', 'Cream', 85000, 14, 'Krim mata pekat merawat mata panda & mengurangi garis halus di kantung mata.', 'https://images.unsplash.com/photo-1512290900676-26c2a6a095ae?auto=format&fit=crop&w=800&q=80']
+            ];
+            foreach ($init_products as $p) {
+                $id = $p[0];
+                $nm = $db->real_escape_string($p[1]);
+                $ct = $db->real_escape_string($p[2]);
+                $pr = $p[3];
+                $st = $p[4];
+                $ds = $db->real_escape_string($p[5]);
+                $im = $db->real_escape_string($p[6]);
+                $db->query("INSERT IGNORE INTO products (id, name, category, price, stock, description, image_url) VALUES ($id, '$nm', '$ct', $pr, $st, '$ds', '$im')");
+            }
+        }
+    }
+}
+
+// ENDPOINT POST: SIMPAN PESANAN, UPDATE STOK ADMIN, TAMBAH/HAPUS PRODUK
+if ($_SERVER['REQUEST_METHOD'] === 'POST' AND isset($_POST['action'])) {
+    header('Content-Type: application/json');
+
+    if (empty($db) OR $db->connect_error) {
+        echo json_encode(['status' => 'error', 'message' => 'Koneksi database gagal']);
+        exit;
+    }
+
+    if ($_POST['action'] === 'save_order') {
+        $name    = $db->real_escape_string($_POST['name']);
+        $phone   = $db->real_escape_string($_POST['phone']);
+        $address = $db->real_escape_string($_POST['address']);
+        $total   = floatval($_POST['total']);
+        $cart    = json_decode($_POST['cart'], true);
+
+        $sql_cust = "INSERT INTO customers (full_name, phone, address) VALUES ('$name', '$phone', '$address')";
+        if ($db->query($sql_cust)) {
+            $customer_id = $db->insert_id;
+        } else {
+            $customer_id = 1;
+        }
+
+        $sql_order = "INSERT INTO orders (customer_id, total_amount, created_at) VALUES ('$customer_id', '$total', NOW())";
+        if ($db->query($sql_order)) {
+            $order_id = $db->insert_id;
+
+            if (is_array($cart)) {
+                foreach ($cart as $item) {
+                    $prod_id  = intval($item['id']);
+                    $qty      = intval($item['qty']);
+                    $subtotal = floatval($item['price']) * $qty;
+                    
+                    $db->query("INSERT INTO order_items (order_id, product_id, quantity, subtotal) VALUES ('$order_id', '$prod_id', '$qty', '$subtotal')");
+                    $db->query("UPDATE products SET stock = GREATEST(0, stock - $qty) WHERE id = $prod_id");
+                }
+            }
+            echo json_encode(['status' => 'success', 'order_id' => $order_id]);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => $db->error]);
+        }
+        exit;
+    }
+
+    if ($_POST['action'] === 'update_stock') {
+        $prod_id   = intval($_POST['product_id']);
+        $new_stock = max(0, intval($_POST['stock']));
+        $db->query("UPDATE products SET stock = $new_stock WHERE id = $prod_id");
+        echo json_encode(['status' => 'success', 'product_id' => $prod_id, 'stock' => $new_stock]);
+        exit;
+    }
+
+    if ($_POST['action'] === 'add_product') {
+        $name     = $db->real_escape_string($_POST['name']);
+        $category = $db->real_escape_string($_POST['category']);
+        $price    = floatval($_POST['price']);
+        $stock    = max(0, intval($_POST['stock']));
+        $desc     = $db->real_escape_string($_POST['desc']);
+        $img      = $db->real_escape_string($_POST['img']);
+
+        $sql = "INSERT INTO products (name, category, price, stock, description, image_url) VALUES ('$name', '$category', $price, $stock, '$desc', '$img')";
+        if ($db->query($sql)) {
+            echo json_encode(['status' => 'success', 'id' => $db->insert_id]);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => $db->error]);
+        }
+        exit;
+    }
+
+    if ($_POST['action'] === 'delete_product') {
+        $prod_id = intval($_POST['product_id']);
+        $db->query("DELETE FROM products WHERE id = $prod_id");
+        echo json_encode(['status' => 'success']);
+        exit;
+    }
+}
+
+// ENDPOINT GET: AMBIL RIWAYAT PESANAN REAL-TIME
+if ($_SERVER['REQUEST_METHOD'] === 'GET' AND isset($_GET['action'])) {
+    if ($_GET['action'] === 'get_orders') {
+        header('Content-Type: application/json');
+        
+        if (empty($db) OR $db->connect_error) {
+            echo json_encode(['status' => 'error', 'orders' => []]);
+            exit;
+        }
+
+        $filter_customer = isset($_GET['customer_name']) ? trim($_GET['customer_name']) : '';
+        $where_clause = "";
+        if ($filter_customer !== '') {
+            $safe_name = $db->real_escape_string($filter_customer);
+            $where_clause = "WHERE c.full_name LIKE '%$safe_name%'";
+        }
+
+        $sql = "SELECT 
+                    o.id AS order_id,
+                    COALESCE(c.full_name, 'Pembeli Umum') AS full_name,
+                    COALESCE(c.phone, '-') AS phone,
+                    COALESCE(c.address, '-') AS address,
+                    COALESCE(p.name, 'Produk Skincare') AS product_name,
+                    COALESCE(oi.quantity, 1) AS quantity,
+                    COALESCE(o.total_amount, 0) AS total_amount,
+                    COALESCE(o.created_at, NOW()) AS created_at
+                FROM orders o
+                LEFT JOIN customers c ON o.customer_id = c.id
+                LEFT JOIN order_items oi ON o.id = oi.order_id
+                LEFT JOIN products p ON oi.product_id = p.id
+                $where_clause
+                ORDER BY o.id DESC";
+
+        $res = $db->query($sql);
+        $grouped_orders = [];
+
+        if (!empty($res) AND $res->num_rows > 0) {
+            while ($row = $res->fetch_assoc()) {
+                $oid = $row['order_id'];
+                if (!isset($grouped_orders[$oid])) {
+                    $grouped_orders[$oid] = [
+                        'order_id'     => $oid,
+                        'full_name'    => $row['full_name'],
+                        'phone'        => $row['phone'],
+                        'address'      => $row['address'],
+                        'total_amount' => floatval($row['total_amount']),
+                        'created_at'   => date('d M Y, H:i', strtotime($row['created_at'])),
+                        'items'        => []
+                    ];
+                }
+                $grouped_orders[$oid]['items'][] = $row['product_name'] . ' (x' . $row['quantity'] . ')';
+            }
+        }
+
+        echo json_encode(['status' => 'success', 'orders' => array_values($grouped_orders)]);
+        exit;
+    }
+}
+
+// AMBIL DAFTAR PRODUK DARI DATABASE
+$products_list = [];
+if (!empty($db) AND empty($db->connect_error)) {
+    $res_prod = $db->query("SELECT * FROM products ORDER BY id ASC");
+    if ($res_prod AND $res_prod->num_rows > 0) {
+        while ($row = $res_prod->fetch_assoc()) {
+            $products_list[] = $row;
+        }
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aesthetic Glow - Luxury Pink Beauty</title>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,400;1,600&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --primary: #c896a6;
+      --primary-dark: #aa6f82;
+      --primary-light: #fbf0f3;
+      --rose-gold: #e2b4c2;
+      --bg-soft: #faf4f6;
+      --bg-card: #ffffff;
+      --text-dark: #2d2226;
+      --text-muted: #857279;
+      --border-color: #f1d8e0;
+      --shadow-luxury: 0 15px 35px rgba(200, 150, 166, 0.12);
+      --shadow-hover: 0 20px 40px rgba(170, 111, 130, 0.2);
+      --font-luxury: 'Cormorant Garamond', serif;
+      --font-body: 'Plus Jakarta Sans', sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: var(--font-body); }
+    body { background-color: var(--bg-soft); color: var(--text-dark); padding-bottom: 80px; }
+
+    .top-bar {
+      background: linear-gradient(135deg, #2d2226 0%, #4a363d 100%); 
+      color: #f8e8ed; text-align: center;
+      padding: 10px 16px; font-size: 11px; letter-spacing: 2.5px; text-transform: uppercase; font-weight: 600;
+    }
+
+    header {
+      background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(16px);
+      position: sticky; top: 0; z-index: 100; border-bottom: 1px solid var(--border-color);
+      box-shadow: 0 4px 20px rgba(200, 150, 166, 0.08);
+    }
+
+    .header-container {
+      max-width: 1200px; margin: 0 auto; padding: 18px 24px;
+      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
+    }
+
+    .brand-logo {
+      font-family: var(--font-luxury); font-size: 30px; font-weight: 700;
+      color: var(--text-dark); text-decoration: none; letter-spacing: 1.5px; text-transform: uppercase;
+    }
+    .brand-logo span { color: var(--primary-dark); font-style: italic; }
+
+    .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+    .welcome-text {
+      font-size: 12px; font-weight: 600; color: var(--primary-dark);
+      background: var(--primary-light); padding: 7px 16px; border-radius: 20px;
+      border: 1px solid var(--border-color);
+    }
+
+    .cart-btn-wrapper { 
+      position: relative; cursor: pointer; display: flex; align-items: center; 
+      background: var(--primary-light); padding: 8px 12px; border-radius: 50px; 
+      border: 1px solid var(--border-color); transition: 0.3s; 
+    }
+    .cart-btn-wrapper:hover { background: var(--border-color); }
+
+    .cart-badge {
+      position: absolute; top: -6px; right: -6px; background: var(--primary-dark);
+      color: #fff; font-size: 10px; font-weight: 700; width: 20px; height: 20px;
+      border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 2px solid #fff;
+    }
+
+    .btn-auth {
+      background: #ffffff; color: var(--text-dark); border: 1px solid var(--primary-dark);
+      padding: 8px 16px; border-radius: 30px; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.3s ease;
+    }
+    .btn-auth:hover { background: var(--primary-dark); color: #ffffff; }
+
+    .btn-customer-history {
+      display: none; background: var(--primary-light); color: var(--primary-dark); border: 1px solid var(--primary-dark);
+      padding: 8px 16px; border-radius: 30px; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.3s ease;
+    }
+    body.customer-mode .btn-customer-history { display: inline-block; }
+    .btn-customer-history:hover { background: var(--primary-dark); color: #ffffff; }
+
+    .btn-admin-add {
+      display: none; background: #28a745; color: #ffffff; border: none;
+      padding: 8px 16px; border-radius: 30px; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.3s ease;
+    }
+    body.admin-mode .btn-admin-add { display: inline-block; }
+    .btn-admin-add:hover { background: #218838; }
+
+    .btn-admin-stock {
+      display: none; background: #0d6efd; color: #ffffff; border: none;
+      padding: 8px 16px; border-radius: 30px; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.3s ease;
+    }
+    body.admin-mode .btn-admin-stock { display: inline-block; }
+    .btn-admin-stock:hover { background: #0b5ed7; }
+
+    /* 1. TAMPILAN BERANDA DENGAN BACKGROUND FOTO SKINCARE MEWAH */
+    .hero-section {
+      max-width: 1200px; margin: 30px auto; padding: 0 24px;
+    }
+    .hero-banner {
+      /* Background foto skincare Unsplash bernuansa mewah dengan gradasi gelap transparan agar teks sangat kontras & terbaca */
+      background: linear-gradient(rgba(45, 34, 38, 0.65), rgba(170, 111, 130, 0.75)), 
+                  url('https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=1600&q=80') center/cover no-repeat;
+      border-radius: 32px; padding: 75px 40px; text-align: center;
+      border: 1px solid var(--border-color); box-shadow: var(--shadow-luxury);
+      position: relative; overflow: hidden; color: #ffffff;
+    }
+    .hero-tag { 
+      font-family: var(--font-luxury); font-size: 18px; font-style: italic; 
+      color: #f8e8ed; margin-bottom: 8px; letter-spacing: 2px; text-transform: uppercase;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .hero-banner h1 { 
+      font-family: var(--font-luxury); font-size: 52px; font-weight: 700; 
+      color: #ffffff; margin-bottom: 14px; letter-spacing: 1px;
+      text-shadow: 0 3px 8px rgba(0,0,0,0.4);
+    }
+    .hero-banner p { 
+      color: #fbf0f3; font-size: 15px; max-width: 600px; 
+      margin: 0 auto 28px; line-height: 1.7; font-weight: 400;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .hero-btn {
+      background: #ffffff; color: var(--text-dark); border: none; padding: 13px 32px;
+      border-radius: 30px; font-weight: 700; font-size: 13px; cursor: pointer; transition: 0.3s;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+    }
+    .hero-btn:hover { background: var(--primary-light); color: var(--primary-dark); transform: translateY(-2px); }
+
+    /* 2. BAGIAN PENCARIAN & KATALOG PRODUK */
+    .section-title {
+      max-width: 1200px; margin: 40px auto 15px; padding: 0 24px;
+      font-family: var(--font-luxury); font-size: 28px; font-weight: 700; color: var(--text-dark);
+    }
+
+    .controls-container { max-width: 1200px; margin: 0 auto 25px; padding: 0 24px; display: flex; flex-direction: column; gap: 20px; }
+    .search-bar { 
+      width: 100%; max-width: 100%; margin: 0 auto; display: block; 
+      padding: 15px 28px; border-radius: 35px; border: 1px solid var(--border-color); 
+      outline: none; font-size: 14px; background: #ffffff; text-align: center; color: var(--text-dark);
+      box-shadow: 0 8px 25px rgba(200, 150, 166, 0.08); transition: 0.3s;
+    }
+    .search-bar:focus { border-color: var(--primary-dark); box-shadow: 0 8px 25px rgba(170, 111, 130, 0.15); }
+    
+    .category-filters { display: flex; gap: 10px; overflow-x: auto; padding: 6px; justify-content: flex-start; flex-wrap: wrap; }
+    .category-btn { 
+      background: #ffffff; border: 1px solid var(--border-color); padding: 9px 22px; 
+      border-radius: 25px; font-size: 12px; font-weight: 600; color: var(--text-dark); 
+      cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.02);
+    }
+    .category-btn.active, .category-btn:hover { background: var(--primary-dark); color: #ffffff; border-color: var(--primary-dark); transform: translateY(-2px); }
+
+    /* GRID PRODUK ESTETIK DENGAN RATING */
+    .grid { max-width: 1200px; margin: 0 auto; padding: 10px 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 30px; }
+    .card { 
+      background: var(--bg-card); border-radius: 24px; overflow: hidden; 
+      box-shadow: var(--shadow-luxury); transition: all 0.35s ease; position: relative; 
+      display: flex; flex-direction: column; border: 1px solid var(--border-color); 
+    }
+    .card:hover { transform: translateY(-8px); box-shadow: var(--shadow-hover); }
+    .card.hide { display: none; }
+
+    .card-img-wrapper { position: relative; width: 100%; height: 260px; overflow: hidden; background-color: var(--primary-light); }
+    .card-img-wrapper img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.6s ease; }
+    .card:hover .card-img-wrapper img { transform: scale(1.06); }
+
+    .card-badge { position: absolute; top: 14px; left: 14px; background: rgba(255, 255, 255, 0.95); color: var(--primary-dark); padding: 5px 14px; border-radius: 20px; font-size: 10px; font-weight: 700; text-transform: uppercase; border: 1px solid var(--border-color); backdrop-filter: blur(4px); }
+    .stock-badge { position: absolute; top: 14px; right: 14px; background: rgba(45, 34, 38, 0.85); color: #fff; padding: 5px 12px; border-radius: 20px; font-size: 10px; font-weight: 700; backdrop-filter: blur(4px); }
+
+    .card-content { padding: 22px; display: flex; flex-direction: column; flex-grow: 1; }
+    
+    .product-rating { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+    .stars { color: #f39c12; font-size: 13px; letter-spacing: 1px; }
+    .rating-count { font-size: 11px; color: var(--text-muted); font-weight: 600; }
+
+    .card-title { font-family: var(--font-luxury); font-size: 21px; font-weight: 700; margin-bottom: 6px; color: var(--text-dark); }
+    .card-desc { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; line-height: 1.6; flex-grow: 1; }
+    .card-price { font-family: var(--font-luxury); font-size: 22px; font-weight: 700; color: var(--primary-dark); margin-bottom: 14px; }
+
+    .stock-control-admin { display: none; background: var(--primary-light); padding: 8px 12px; border-radius: 12px; margin-bottom: 12px; align-items: center; justify-content: space-between; font-size: 12px; border: 1px solid var(--border-color); }
+    body.admin-mode .stock-control-admin { display: flex; }
+    .stock-btn { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--primary-dark); background: #fff; color: var(--primary-dark); font-weight: bold; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: 0.2s; }
+    .stock-btn:hover { background: var(--primary-dark); color: #fff; }
+
+    .btn-delete-product {
+      display: none; background: #dc3545; color: white; border: none; padding: 8px; border-radius: 10px;
+      font-size: 11px; font-weight: bold; cursor: pointer; margin-top: 6px; text-align: center;
+    }
+    body.admin-mode .btn-delete-product { display: block; }
+
+    .btn-add-cart { background: var(--primary-dark); color: white; border: none; padding: 12px; border-radius: 14px; font-weight: 600; font-size: 12px; cursor: pointer; width: 100%; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(170, 111, 130, 0.25); }
+    .btn-add-cart:hover { background: var(--text-dark); box-shadow: 0 6px 20px rgba(45, 34, 38, 0.25); }
+    .btn-add-cart.disabled { background: #ccc; cursor: not-allowed; box-shadow: none; }
+
+    /* MODAL & DRAWER */
+    .modal-overlay { 
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+      background: rgba(45, 34, 38, 0.5); backdrop-filter: blur(8px); 
+      z-index: 200; display: none; align-items: center; justify-content: center; 
+      opacity: 0; transition: opacity 0.3s ease; padding: 20px; 
+    }
+    .modal-overlay.active { display: flex; opacity: 1; }
+    .modal-box { background: white; width: 100%; max-width: 850px; border-radius: 28px; padding: 32px; max-height: 88vh; overflow-y: auto; position: relative; box-shadow: 0 25px 50px rgba(0,0,0,0.15); }
+    .modal-title-font { font-family: var(--font-luxury); }
+    .close-modal { position: absolute; top: 20px; right: 20px; background: var(--primary-light); border: 1px solid var(--border-color); width: 36px; height: 36px; border-radius: 50%; cursor: pointer; font-weight: bold; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
+    .close-modal:hover { background: var(--primary-dark); color: #fff; }
+
+    .cart-drawer { position: fixed; top: 0; right: -420px; width: 100%; max-width: 400px; height: 100%; background: white; z-index: 300; box-shadow: -15px 0 40px rgba(0,0,0,0.1); transition: right 0.35s ease; display: flex; flex-direction: column; }
+    .cart-drawer.active { right: 0; }
+    .cart-header { padding: 24px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
+    .cart-items { padding: 24px; flex-grow: 1; overflow-y: auto; }
+    .cart-item { display: flex; gap: 14px; margin-bottom: 18px; padding-bottom: 18px; border-bottom: 1px dashed var(--border-color); align-items: center; }
+    .cart-item-img { width: 65px; height: 65px; border-radius: 12px; object-fit: cover; background: var(--primary-light); }
+    .qty-btn { width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--border-color); background: white; cursor: pointer; font-weight: bold; }
+    .cart-footer { padding: 24px; border-top: 1px solid var(--border-color); background-color: var(--bg-soft); }
+
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; font-size: 11px; font-weight: 700; margin-bottom: 6px; text-transform: uppercase; color: var(--text-dark); letter-spacing: 0.5px; }
+    .form-control { width: 100%; padding: 13px 18px; border-radius: 14px; border: 1px solid var(--border-color); font-size: 13px; outline: none; background: #ffffff; transition: 0.3s; }
+    .form-control:focus { border-color: var(--primary-dark); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+    th { background: var(--primary-light); color: var(--primary-dark); padding: 14px 12px; text-align: left; border-bottom: 2px solid var(--border-color); font-weight: 700; }
+    td { padding: 14px 12px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+    .status-pill { background: #d4edda; color: #155724; padding: 5px 12px; border-radius: 12px; font-size: 10px; font-weight: 700; display: inline-block; }
+    .stock-input-direct { width: 65px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--primary-dark); text-align: center; font-weight: 700; font-size: 13px; }
+  </style>
+</head>
+<body>
+
+  <div class="top-bar">✨ Komitmen Keaslian 100% Original & Terdaftar Resmi BPOM ✨</div>
+
+  <header>
+    <div class="header-container">
+      <a href="#" class="brand-logo">Aesthetic <span>Glow</span></a>
+      <div class="header-actions">
+        <!-- TOMBOL DASHBOARD PELANGGAN -->
+        <button class="btn-customer-history" id="openCustomerHistoryBtn">📦 Pesanan Saya</button>
+        
+        <!-- TOMBOL DASHBOARD ADMIN / KASIR -->
+        <button class="btn-admin-stock" id="openManageStockBtn">📦 Kelola Stok</button>
+        <button class="btn-admin-add" id="openAddProductBtn">➕ Tambah Produk</button>
+        <button class="btn-auth" id="openOrdersBtn" style="border-color: var(--primary-dark); color: var(--primary-dark);">📋 Dashboard Kasir</button>
+        
+        <span class="welcome-text" id="userInfoDisplay">Selamat Datang</span>
+        <button class="btn-auth" id="openAuthBtn">Login / Masuk</button>
+        <button class="btn-auth" id="logoutBtn" style="display: none; border-color: #e63946; color: #e63946;">Keluar</button>
+        
+        <div class="cart-btn-wrapper" id="openCartBtn">
+          <span style="font-size: 18px;">🛍️</span>
+          <div class="cart-badge" id="cartBadge">0</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- 1. TAMPILAN BERANDA DENGAN BACKGROUND FOTO SKINCARE MEWAH -->
+  <section class="hero-section">
+    <div class="hero-banner">
+      <div class="hero-tag">Luxury Pink Collection 🌸</div>
+      <h1>Aesthetic Glow Skincare</h1>
+      <p>Formulasi eksklusif dengan sentuhan bahan aktif premium untuk hasil kulit sehat, kenyal, dan bercahaya sempurna setiap hari.</p>
+      <button class="hero-btn" onclick="document.getElementById('productGrid').scrollIntoView({behavior: 'smooth'})">Jelajahi Koleksi ✨</button>
+    </div>
+  </section>
+
+  <!-- 2. KONTROL PENCARIAN & KATEGORI -->
+  <div class="section-title">Katalog Pilihan Terbaik</div>
+  <div class="controls-container">
+    <input type="text" id="searchInput" class="search-bar" placeholder="Cari Facial Wash, Toner, Serum, Sunscreen, Moisturizer...">
+    <div class="category-filters">
+      <button class="category-btn active" data-filter="all">Semua Produk</button>
+      <button class="category-btn" data-filter="Facial Wash">Facial Wash 🧼</button>
+      <button class="category-btn" data-filter="Toner">Toner 💧</button>
+      <button class="category-btn" data-filter="Serum">Serum ✨</button>
+      <button class="category-btn" data-filter="Moisturizer">Moisturizer 🌸</button>
+      <button class="category-btn" data-filter="Sunscreen">Sunscreen ☀️</button>
+      <button class="category-btn" data-filter="Cream">Special Cream 🌙</button>
+    </div>
+  </div>
+
+  <!-- KATALOG PRODUK DINAMIS DARI DATABASE -->
+  <main class="grid" id="productGrid">
+    <?php foreach ($products_list as $prod): 
+        $pid    = intval($prod['id']);
+        $pname  = htmlspecialchars($prod['name']);
+        $pcat   = htmlspecialchars($prod['category'] ?? 'Skincare');
+        $pprice = floatval($prod['price']);
+        $pstock = intval($prod['stock']);
+        $pdesc  = htmlspecialchars($prod['description'] ?? 'Formulasi skincare premium untuk perawatan kulit wajah.');
+        $pimg   = htmlspecialchars($prod['image_url'] ?? 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=800&q=80');
+        $is_out = ($pstock <= 0);
+        
+        $ratings = [
+            1 => ['stars' => '★★★★★', 'score' => '4.9', 'count' => '(128)'], 
+            2 => ['stars' => '★★★★★', 'score' => '4.8', 'count' => '(94)'], 
+            3 => ['stars' => '★★★★★', 'score' => '5.0', 'count' => '(210)'], 
+            4 => ['stars' => '★★★★★', 'score' => '4.9', 'count' => '(156)'], 
+            5 => ['stars' => '★★★★★', 'score' => '4.8', 'count' => '(88)'], 
+            6 => ['stars' => '★★★★★', 'score' => '4.9', 'count' => '(112)'], 
+            7 => ['stars' => '★★★★★', 'score' => '5.0', 'count' => '(75)'], 
+            8 => ['stars' => '★★★★★', 'score' => '4.9', 'count' => '(64)']
+        ];
+        $rating = $ratings[$pid] ?? ['stars' => '★★★★★', 'score' => '4.9', 'count' => '(50)'];
+    ?>
+    <div class="card" data-id="<?php echo $pid; ?>" data-category="<?php echo $pcat; ?>" data-name="<?php echo $pname; ?>" data-price="<?php echo $pprice; ?>" data-stock="<?php echo $pstock; ?>" data-img="<?php echo $pimg; ?>">
+      <div class="card-img-wrapper">
+        <span class="card-badge"><?php echo $pcat; ?></span>
+        <span class="stock-badge" id="stockBadge-<?php echo $pid; ?>">Stok: <?php echo $pstock; ?></span>
+        <img src="<?php echo $pimg; ?>" alt="<?php echo $pname; ?>">
+      </div>
+      <div class="card-content">
+        <!-- RATING BINTANG ESTETIK -->
+        <div class="product-rating">
+          <span class="stars"><?php echo $rating['stars']; ?></span>
+          <span class="rating-count"><b><?php echo $rating['score']; ?></b> <?php echo $rating['count']; ?></span>
+        </div>
+
+        <h2 class="card-title"><?php echo $pname; ?></h2>
+        <p class="card-desc"><?php echo $pdesc; ?></p>
+        <div class="card-price">Rp <?php echo number_format($pprice, 0, ',', '.'); ?></div>
+        
+        <!-- KONTROL TAMBAH & KURANG STOK DI KARTU (KHUSUS ADMIN) -->
+        <div class="stock-control-admin">
+          <span>Atur Stok:</span>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <button class="stock-btn" onclick="updateStock(<?php echo $pid; ?>, -1)" title="Kurangi 1">-</button>
+            <strong id="stockVal-<?php echo $pid; ?>" style="min-width: 24px; text-align:center;"><?php echo $pstock; ?></strong>
+            <button class="stock-btn" onclick="updateStock(<?php echo $pid; ?>, 1)" title="Tambah 1">+</button>
+          </div>
+        </div>
+
+        <button class="btn-add-cart <?php echo $is_out ? 'disabled' : ''; ?>" id="addBtn-<?php echo $pid; ?>" <?php echo $is_out ? 'disabled' : ''; ?> onclick="addToCart(<?php echo $pid; ?>, '<?php echo addslashes($pname); ?>', <?php echo $pprice; ?>, '<?php echo $pimg; ?>')">
+          <?php echo $is_out ? 'Stok Habis' : '+ Keranjang'; ?>
+        </button>
+        <button class="btn-delete-product" onclick="deleteProduct(<?php echo $pid; ?>)">🗑️ Hapus Produk</button>
+      </div>
+    </div>
+    <?php endforeach; ?>
+  </main>
+
+  <!-- MODAL KHUSUS ADMIN: KELOLA TAMBAH & KURANG STOK MASSAL -->
+  <div class="modal-overlay" id="manageStockModal">
+    <div class="modal-box">
+      <button class="close-modal" onclick="closeModal('manageStockModal')">&times;</button>
+      <h3 class="modal-title-font" style="font-size: 24px; color: var(--primary-dark); text-align: center; margin-bottom: 6px;">📦 Manajemen Stok Produk (Admin)</h3>
+      <p style="text-align: center; font-size: 12px; color: var(--text-muted); margin-bottom: 15px;">Tambah atau kurangi stok produk dengan tombol <b>- / +</b> atau ketik angka stok secara langsung. Tersimpan otomatis ke database!</p>
+
+      <div style="overflow-x: auto; max-height: 60vh;">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Nama Produk</th>
+              <th>Kategori</th>
+              <th style="text-align:center;">Kurang / Tambah Stok</th>
+              <th style="text-align:center;">Status</th>
+            </tr>
+          </thead>
+          <tbody id="manageStockTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 1: DASHBOARD RIWAYAT PESANAN PELANGGAN -->
+  <div class="modal-overlay" id="customerHistoryModal">
+    <div class="modal-box">
+      <button class="close-modal" onclick="closeModal('customerHistoryModal')">&times;</button>
+      <h3 class="modal-title-font" style="font-size: 24px; color: var(--primary-dark); text-align: center; margin-bottom: 6px;">📦 Riwayat Pesanan Saya</h3>
+      <p style="text-align: center; font-size: 12px; color: var(--text-muted); margin-bottom: 15px;">Menampilkan transaksi atas nama: <b id="customerModalName">-</b> (Tersambung ke Kasir)</p>
+
+      <div style="overflow-x: auto; max-height: 60vh;">
+        <table>
+          <thead>
+            <tr>
+              <th>No. Nota</th>
+              <th>Produk Dipesan</th>
+              <th>Total Bayar</th>
+              <th>Alamat Kirim</th>
+              <th>Waktu Order</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="customerHistoryTableBody">
+            <tr><td colspan="6" style="text-align: center; padding: 20px;">Memuat riwayat pesanan...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 2: DASHBOARD KASIR & REKAP PENDAPATAN HARIAN -->
+  <div class="modal-overlay" id="ordersModal">
+    <div class="modal-box">
+      <button class="close-modal" onclick="closeModal('ordersModal')">&times;</button>
+      <h3 class="modal-title-font" style="font-size: 24px; color: var(--primary-dark); text-align: center; margin-bottom: 6px;">📋 Dashboard Kasir & Rekap Pendapatan</h3>
+      <p style="text-align: center; font-size: 12px; color: var(--text-muted); margin-bottom: 15px;">Data laporan transaksi masuk secara real-time dari database: <b>db_skincare</b></p>
+
+      <div style="display: flex; gap: 15px; margin-bottom: 20px;">
+        <div style="flex: 1; background: var(--primary-light); padding: 16px; border-radius: 16px; border: 1px solid var(--border-color);">
+          <div style="font-size: 11px; font-weight: 700; color: var(--primary-dark); text-transform: uppercase;">Total Pendapatan Terkini</div>
+          <div id="dailyRevenueDisplay" style="font-family: var(--font-luxury); font-size: 24px; font-weight: 700; color: var(--text-dark); margin-top: 4px;">Rp 0</div>
+        </div>
+        <div style="flex: 1; background: #ffffff; padding: 16px; border-radius: 16px; border: 1px solid var(--border-color);">
+          <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Total Nota Transaksi</div>
+          <div id="dailyCountDisplay" style="font-family: var(--font-luxury); font-size: 24px; font-weight: 700; color: var(--text-dark); margin-top: 4px;">0 Nota</div>
+        </div>
+      </div>
+
+      <div style="overflow-x: auto; max-height: 50vh;">
+        <table>
+          <thead>
+            <tr>
+              <th>ID Nota</th>
+              <th>Nama Pembeli</th>
+              <th>No. HP & Alamat</th>
+              <th>Rincian Produk</th>
+              <th>Total Bayar</th>
+              <th>Waktu & Status</th>
+            </tr>
+          </thead>
+          <tbody id="cashierOrdersTableBody">
+            <tr><td colspan="6" style="text-align: center; padding: 20px;">Memuat data transaksi kasir...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL TAMBAH PRODUK BARU -->
+  <div class="modal-overlay" id="addProductModal">
+    <div class="modal-box" style="max-width: 480px;">
+      <button class="close-modal" onclick="closeModal('addProductModal')">&times;</button>
+      <h3 class="modal-title-font" style="text-align: center; margin-bottom: 18px; font-size: 24px;">➕ Tambah Produk Skincare</h3>
+      <form id="addProductForm">
+        <div class="form-group">
+          <label>Nama Produk</label>
+          <input type="text" id="newProdName" class="form-control" placeholder="Contoh: Rose Lip Mask" required>
+        </div>
+        <div class="form-group">
+          <label>Kategori</label>
+          <select id="newProdCategory" class="form-control" required>
+            <option value="Facial Wash">Facial Wash</option>
+            <option value="Toner">Toner</option>
+            <option value="Serum">Serum</option>
+            <option value="Moisturizer">Moisturizer</option>
+            <option value="Sunscreen">Sunscreen</option>
+            <option value="Cream">Cream</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Harga (Rp)</label>
+          <input type="number" id="newProdPrice" class="form-control" placeholder="65000" required>
+        </div>
+        <div class="form-group">
+          <label>Stok Awal</label>
+          <input type="number" id="newProdStock" class="form-control" placeholder="20" required>
+        </div>
+        <div class="form-group">
+          <label>Deskripsi Produk</label>
+          <textarea id="newProdDesc" class="form-control" rows="2" placeholder="Deskripsi singkat khasiat..." required></textarea>
+        </div>
+        <div class="form-group">
+          <label>URL Gambar (Unsplash)</label>
+          <input type="url" id="newProdImg" class="form-control" placeholder="https://images.unsplash.com/..." required>
+        </div>
+        <button type="submit" class="btn-add-cart" style="margin-top: 10px; padding: 12px; background: #28a745;">Simpan Produk Baru</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- KERANJANG DRAWER -->
+  <div class="cart-drawer" id="cartOverlay">
+    <div class="cart-header">
+      <h3 class="modal-title-font" style="font-size: 20px;">🛍️ Keranjang Belanja</h3>
+      <button class="close-modal" onclick="closeCart()">&times;</button>
+    </div>
+    <div class="cart-items" id="cartItemsContainer"></div>
+    <div class="cart-footer">
+      <div style="display: flex; justify-content: space-between; margin-bottom: 16px; font-weight: 700;">
+        <span>Total Pembayaran:</span>
+        <span id="cartTotalPrice" class="modal-title-font" style="color: var(--primary-dark); font-size: 20px;">Rp 0</span>
+      </div>
+      <button class="btn-add-cart" id="openCheckoutBtn" style="padding: 14px; font-size: 13px;">Lanjut ke Pembayaran</button>
+    </div>
+  </div>
+
+  <!-- MODAL AUTH LOGIN -->
+  <div class="modal-overlay" id="authModal">
+    <div class="modal-box" style="max-width: 400px;">
+      <button class="close-modal" onclick="closeModal('authModal')">&times;</button>
+      <h3 class="modal-title-font" style="text-align: center; margin-bottom: 18px; font-size: 24px;">Masuk Akun</h3>
+      <form id="loginForm">
+        <div class="form-group">
+          <label>Masuk Sebagai</label>
+          <select id="loginRole" class="form-control">
+            <option value="customer">Pelanggan</option>
+            <option value="admin">Admin / Kasir Toko</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Username / Nama Lengkap</label>
+          <input type="text" id="loginEmail" class="form-control" placeholder="Contoh: Siti Rahma / nindyaglow" required>
+        </div>
+        <div class="form-group">
+          <label>Kata Sandi</label>
+          <input type="password" id="loginPassword" class="form-control" placeholder="123" required>
+        </div>
+        <button type="submit" class="btn-add-cart" style="margin-top: 10px; padding: 12px;">Masuk Sekarang</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL CHECKOUT -->
+  <div class="modal-overlay" id="checkoutModal">
+    <div class="modal-box" style="max-width: 500px;">
+      <button class="close-modal" onclick="closeModal('checkoutModal')">&times;</button>
+      <h3 class="modal-title-font" style="margin-bottom: 18px; font-size: 22px;">Form Pemesanan</h3>
+      <form id="checkoutForm">
+        <div class="form-group">
+          <label>Nama Lengkap</label>
+          <input type="text" id="custName" class="form-control" placeholder="Masukkan nama kamu" required>
+        </div>
+        <div class="form-group">
+          <label>Nomor WhatsApp</label>
+          <input type="tel" id="custPhone" class="form-control" placeholder="08xxxxxxxxxx" required>
+        </div>
+        <div class="form-group">
+          <label>Alamat Lengkap Pengiriman</label>
+          <textarea id="custAddress" class="form-control" rows="3" placeholder="Jl. Veteran No. 12, Bojonegoro" required></textarea>
+        </div>
+        <button type="submit" class="btn-add-cart" style="margin-top: 18px; padding: 12px; background: #25d366;">Kirim Pesanan & Simpan ke Riwayat</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    let cart = [];
+    let currentUser = null;
+
+    function openModal(id) { document.getElementById(id).classList.add('active'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+    function openCart() { document.getElementById('cartOverlay').classList.add('active'); }
+    function closeCart() { document.getElementById('cartOverlay').classList.remove('active'); }
+    function formatRupiah(num) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(num); }
+
+    function saveStockToDB(productId, newStock) {
+      const fd = new FormData();
+      fd.append('action', 'update_stock');
+      fd.append('product_id', productId);
+      fd.append('stock', newStock);
+      fetch('index.php', { method: 'POST', body: fd }).catch(err => console.error(err));
+    }
+
+    function applyStockUI(productId, newStock) {
+      if (newStock < 0) newStock = 0;
+      const card = document.querySelector(`.card[data-id="${productId}"]`);
+      if (card) {
+        card.dataset.stock = newStock;
+        const badge = document.getElementById(`stockBadge-${productId}`);
+        const valText = document.getElementById(`stockVal-${productId}`);
+        const btn = document.getElementById(`addBtn-${productId}`);
+
+        if (badge) badge.innerText = `Stok: ${newStock}`;
+        if (valText) valText.innerText = newStock;
+
+        if (btn) {
+          if (newStock <= 0) {
+            btn.classList.add('disabled'); btn.disabled = true; btn.innerText = 'Stok Habis';
+          } else {
+            btn.classList.remove('disabled'); btn.disabled = false; btn.innerText = '+ Keranjang';
+          }
+        }
+      }
+
+      const modalInput = document.getElementById(`modalStockInput-${productId}`);
+      const modalStatus = document.getElementById(`modalStockStatus-${productId}`);
+      if (modalInput) modalInput.value = newStock;
+      if (modalStatus) {
+        modalStatus.innerHTML = newStock > 0 ? `<span class="status-pill">Tersedia (${newStock})</span>` : `<span class="status-pill" style="background:#f8d7da; color:#721c24;">Stok Habis</span>`;
+      }
+    }
+
+    function updateStock(productId, change, persist = true) {
+      const card = document.querySelector(`.card[data-id="${productId}"]`);
+      if (!card) return;
+      let currentStock = parseInt(card.dataset.stock) + change;
+      if (currentStock < 0) currentStock = 0;
+      applyStockUI(productId, currentStock);
+      if (persist) saveStockToDB(productId, currentStock);
+    }
+
+    function setDirectStock(productId, rawValue) {
+      let newStock = parseInt(rawValue);
+      if (isNaN(newStock) || newStock < 0) newStock = 0;
+      applyStockUI(productId, newStock);
+      saveStockToDB(productId, newStock);
+    }
+
+    function renderManageStockTable() {
+      const tbody = document.getElementById('manageStockTableBody');
+      const cards = document.querySelectorAll('#productGrid .card');
+      tbody.innerHTML = '';
+
+      cards.forEach(card => {
+        const pid = card.dataset.id;
+        const name = card.dataset.name;
+        const cat = card.dataset.category;
+        const stock = parseInt(card.dataset.stock);
+        const statusHtml = stock > 0 ? `<span class="status-pill">Tersedia (${stock})</span>` : `<span class="status-pill" style="background:#f8d7da; color:#721c24;">Stok Habis</span>`;
+
+        tbody.innerHTML += `
+          <tr>
+            <td style="font-weight:bold; color:var(--primary-dark);">#${pid}</td>
+            <td><b>${name}</b></td>
+            <td>${cat}</td>
+            <td style="text-align:center;">
+              <div style="display:inline-flex; align-items:center; gap:6px;">
+                <button class="stock-btn" onclick="updateStock(${pid}, -1)">-</button>
+                <input type="number" min="0" class="stock-input-direct" id="modalStockInput-${pid}" value="${stock}" onchange="setDirectStock(${pid}, this.value)">
+                <button class="stock-btn" onclick="updateStock(${pid}, 1)">+</button>
+              </div>
+            </td>
+            <td style="text-align:center;" id="modalStockStatus-${pid}">${statusHtml}</td>
+          </tr>
+        `;
+      });
+    }
+
+    function loadCustomerOrders(customerName) {
+      const tbody = document.getElementById('customerHistoryTableBody');
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 15px;">Memuat data...</td></tr>';
+      fetch(`index.php?action=get_orders&customer_name=${encodeURIComponent(customerName)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success' && data.orders.length > 0) {
+            tbody.innerHTML = '';
+            data.orders.forEach(order => {
+              tbody.innerHTML += `
+                <tr>
+                  <td style="font-weight:bold; color:var(--primary-dark);">#${order.order_id}</td>
+                  <td>${order.items.join('<br>')}</td>
+                  <td style="font-weight:bold; color:var(--primary-dark);">${formatRupiah(order.total_amount)}</td>
+                  <td><small>${order.address}</small></td>
+                  <td style="font-size:11px; color:var(--text-muted);">${order.created_at}</td>
+                  <td><span class="status-pill">Terkirim ke Kasir</span></td>
+                </tr>`;
+            });
+          } else {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 20px;">Belum ada riwayat pesanan atas nama <b>${customerName}</b>.</td></tr>`;
+          }
+        });
+    }
+
+    function loadCashierOrders() {
+      const tbody = document.getElementById('cashierOrdersTableBody');
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 15px;">Menyinkronkan...</td></tr>';
+      fetch(`index.php?action=get_orders`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success' && data.orders.length > 0) {
+            tbody.innerHTML = '';
+            let totalRevenue = 0;
+            let totalCount = data.orders.length;
+
+            data.orders.forEach(order => {
+              totalRevenue += order.total_amount;
+              tbody.innerHTML += `
+                <tr>
+                  <td style="font-weight:bold; color:var(--primary-dark);">#${order.order_id}</td>
+                  <td><b>${order.full_name}</b></td>
+                  <td>${order.phone}<br><small style="color:var(--text-muted);">${order.address}</small></td>
+                  <td>${order.items.join('<br>')}</td>
+                  <td style="font-weight:bold; color:var(--primary-dark);">${formatRupiah(order.total_amount)}</td>
+                  <td style="font-size:11px; color:var(--text-muted);">${order.created_at}<br><span class="status-pill" style="margin-top:4px;">Lunas / Diproses</span></td>
+                </tr>`;
+            });
+
+            document.getElementById('dailyRevenueDisplay').innerText = formatRupiah(totalRevenue);
+            document.getElementById('dailyCountDisplay').innerText = `${totalCount} Nota`;
+          } else {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 20px;">Belum ada transaksi masuk di kasir.</td></tr>';
+            document.getElementById('dailyRevenueDisplay').innerText = formatRupiah(0);
+            document.getElementById('dailyCountDisplay').innerText = `0 Nota`;
+          }
+        });
+    }
+
+    function addToCart(id, name, price, img) {
+      const card = document.querySelector(`.card[data-id="${id}"]`);
+      if (!card) return;
+      const currentStock = parseInt(card.dataset.stock);
+      const existing = cart.find(i => i.id === id);
+      const currentCartQty = existing ? existing.qty : 0;
+
+      if (currentCartQty + 1 > currentStock) {
+        alert('Maaf, jumlah pesanan melebihi stok yang tersedia!');
+        return;
+      }
+
+      if (existing) existing.qty += 1;
+      else cart.push({ id, name, price, img, qty: 1 });
+      updateCartUI();
+      openCart();
+    }
+
+    function changeQty(id, delta) {
+      const item = cart.find(i => i.id === id);
+      const card = document.querySelector(`.card[data-id="${id}"]`);
+      if (!card) return;
+      const currentStock = parseInt(card.dataset.stock);
+
+      if (item) {
+        if (delta > 0 && item.qty + 1 > currentStock) {
+          alert('Stok tidak mencukupi!');
+          return;
+        }
+        item.qty += delta;
+        if (item.qty <= 0) cart = cart.filter(i => i.id !== id);
+        updateCartUI();
+      }
+    }
+
+    function updateCartUI() {
+      const container = document.getElementById('cartItemsContainer');
+      container.innerHTML = '';
+      let total = 0, count = 0;
+
+      if (cart.length === 0) {
+        container.innerHTML = '<p style="text-align:center; color: var(--text-muted); margin-top: 30px;">Keranjang kosong.</p>';
+      } else {
+        cart.forEach(item => {
+          total += item.price * item.qty;
+          count += item.qty;
+          container.innerHTML += `
+            <div class="cart-item">
+              <img src="${item.img}" class="cart-item-img">
+              <div style="flex-grow:1;">
+                <div style="font-weight:700;">${item.name}</div>
+                <div style="color:var(--primary-dark); font-weight:700;">${formatRupiah(item.price)}</div>
+                <div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+                  <button class="qty-btn" onclick="changeQty(${item.id}, -1)">-</button>
+                  <span>${item.qty}</span>
+                  <button class="qty-btn" onclick="changeQty(${item.id}, 1)">+</button>
+                </div>
+              </div>
+            </div>`;
+        });
+      }
+      document.getElementById('cartBadge').innerText = count;
+      document.getElementById('cartTotalPrice').innerText = formatRupiah(total);
+    }
+
+    function deleteProduct(productId) {
+      if (confirm('Hapus produk ini dari katalog?')) {
+        const fd = new FormData();
+        fd.append('action', 'delete_product');
+        fd.append('product_id', productId);
+        fetch('index.php', { method: 'POST', body: fd }).then(() => {
+          const card = document.querySelector(`.card[data-id="${productId}"]`);
+          if (card) card.remove();
+          alert('Produk berhasil dihapus!');
+        });
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const openAuthBtn = document.getElementById('openAuthBtn');
+      const logoutBtn = document.getElementById('logoutBtn');
+      const userInfoDisplay = document.getElementById('userInfoDisplay');
+      const loginForm = document.getElementById('loginForm');
+
+      openAuthBtn.onclick = () => openModal('authModal');
+
+      loginForm.onsubmit = (e) => {
+        e.preventDefault();
+        const role = document.getElementById('loginRole').value;
+        const username = document.getElementById('loginEmail').value.trim();
+        const password = document.getElementById('loginPassword').value.trim();
+
+        if (role === 'admin') {
+          if (username === 'nindyaglow' && password === '123') {
+            currentUser = { name: 'Admin Kasir', role: 'admin' };
+            document.body.classList.add('admin-mode');
+            document.body.classList.remove('customer-mode');
+            userInfoDisplay.innerText = "Mode Kasir / Admin";
+            alert("Berhasil masuk sebagai Admin!");
+          } else {
+            alert("Kredensial Admin salah! Gunakan nindyaglow / 123");
+            return;
+          }
+        } else {
+          const customerName = username || 'Pelanggan';
+          currentUser = { name: customerName, role: 'customer' };
+          document.body.classList.remove('admin-mode');
+          document.body.classList.add('customer-mode');
+          userInfoDisplay.innerText = `Hai, ${currentUser.name}`;
+          document.getElementById('customerModalName').innerText = currentUser.name;
+          alert(`Selamat Datang, ${currentUser.name}!`);
+        }
+        openAuthBtn.style.display = 'none';
+        logoutBtn.style.display = 'inline-block';
+        closeModal('authModal');
+      };
+
+      logoutBtn.onclick = () => {
+        currentUser = null;
+        document.body.classList.remove('admin-mode');
+        document.body.classList.remove('customer-mode');
+        userInfoDisplay.innerText = "Selamat Datang";
+        openAuthBtn.style.display = 'inline-block';
+        logoutBtn.style.display = 'none';
+        alert('Anda telah keluar.');
+      };
+
+      document.getElementById('openManageStockBtn').onclick = () => {
+        renderManageStockTable();
+        openModal('manageStockModal');
+      };
+
+      document.getElementById('openCustomerHistoryBtn').onclick = () => {
+        if (currentUser && currentUser.role === 'customer') {
+          document.getElementById('customerModalName').innerText = currentUser.name;
+          loadCustomerOrders(currentUser.name);
+          openModal('customerHistoryModal');
+        }
+      };
+
+      document.getElementById('openOrdersBtn').onclick = () => {
+        loadCashierOrders();
+        openModal('ordersModal');
+      };
+
+      document.getElementById('openAddProductBtn').onclick = () => openModal('addProductModal');
+
+      document.getElementById('addProductForm').onsubmit = (e) => {
+        e.preventDefault();
+        const name = document.getElementById('newProdName').value.trim();
+        const category = document.getElementById('newProdCategory').value;
+        const price = parseInt(document.getElementById('newProdPrice').value);
+        const stock = parseInt(document.getElementById('newProdStock').value);
+        const desc = document.getElementById('newProdDesc').value.trim();
+        const img = document.getElementById('newProdImg').value.trim();
+
+        const fd = new FormData();
+        fd.append('action', 'add_product');
+        fd.append('name', name); fd.append('category', category);
+        fd.append('price', price); fd.append('stock', stock);
+        fd.append('desc', desc); fd.append('img', img);
+
+        fetch('index.php', { method: 'POST', body: fd })
+          .then(res => res.json())
+          .then(data => {
+            location.reload();
+          });
+      };
+
+      const searchInput = document.getElementById('searchInput');
+      const categoryBtns = document.querySelectorAll('.category-btn');
+
+      function filterProducts() {
+        const searchTerm = searchInput.value.toLowerCase();
+        const activeCategory = document.querySelector('.category-btn.active').dataset.filter;
+        const cards = document.querySelectorAll('#productGrid .card');
+
+        cards.forEach(card => {
+          const name = card.dataset.name.toLowerCase();
+          const category = card.dataset.category;
+          if (name.includes(searchTerm) && (activeCategory === 'all' || category === activeCategory)) {
+            card.classList.remove('hide');
+          } else {
+            card.classList.add('hide');
+          }
+        });
+      }
+
+      searchInput.addEventListener('input', filterProducts);
+      categoryBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          categoryBtns.forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          filterProducts();
+        });
+      });
+
+      document.getElementById('openCartBtn').onclick = () => openCart();
+
+      document.getElementById('openCheckoutBtn').onclick = () => {
+        if (cart.length === 0) return alert('Keranjang kosong!');
+        closeCart();
+        if (currentUser && currentUser.role === 'customer') {
+          document.getElementById('custName').value = currentUser.name;
+        }
+        openModal('checkoutModal');
+      };
+
+      document.getElementById('checkoutForm').onsubmit = function(e) {
+        e.preventDefault();
+        const name = document.getElementById('custName').value.trim();
+        const phone = document.getElementById('custPhone').value.trim();
+        const address = document.getElementById('custAddress').value.trim();
+
+        let total = 0, details = '';
+        cart.forEach((item, idx) => {
+          const sub = item.price * item.qty;
+          total += sub;
+          details += `${idx+1}. ${item.name} (${item.qty}x) = ${formatRupiah(sub)}\n`;
+          updateStock(item.id, -item.qty, false);
+        });
+
+        const formData = new FormData();
+        formData.append('action', 'save_order');
+        formData.append('name', name);
+        formData.append('phone', phone);
+        formData.append('address', address);
+        formData.append('total', total);
+        formData.append('cart', JSON.stringify(cart));
+
+        fetch('index.php', { method: 'POST', body: formData })
+          .then(() => {
+            if (currentUser && currentUser.role === 'customer') loadCustomerOrders(currentUser.name);
+            loadCashierOrders();
+          });
+
+        const waMsg = `PESANAN SKINCARE - AESTHETIC GLOW\n----------------------------------------\nNama: ${name}\nNo HP: ${phone}\nAlamat: ${address}\n\nRincian Pesanan:\n${details}Total Bayar: ${formatRupiah(total)}\n----------------------------------------\nMohon diproses, terima kasih!`;
+        window.open(`https://wa.me/6289687028054?text=${encodeURIComponent(waMsg)}`, '_blank');
+
+        cart = [];
+        updateCartUI();
+        closeModal('checkoutModal');
+        alert('Pesanan berhasil dicatat dan stok berkurang otomatis!');
+      };
+    });
+  </script>
+</body>
+</html>
